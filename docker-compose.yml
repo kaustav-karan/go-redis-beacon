@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis_data:/data
+    command: redis-server --save 60 1 --loglevel warning
+    networks:
+      - beacon_network
+    # REMOVED: ports: - "6379:6379"
+
+  beacon:
+    build: .
+    ports:
+      - "8080:8080"  # Only expose the Go service
+    depends_on:
+      - redis
+    environment:
+      - REDIS_ADDR=redis:6379  # Uses internal DNS
+    networks:
+      - beacon_network
+
+networks:
+  beacon_network:
+    driver: bridge
+
+volumes:
+  redis_data:
