@@ -18,7 +18,7 @@ const (
 	defaultPort      = "443"
 	defaultRedisAddr = "redis:6379"
 	recordTTL        = 30 * time.Minute
-	certDir          = "/certs"
+	certDir          = "/app/certs"
 )
 
 type BeaconServer struct {
@@ -38,25 +38,31 @@ type LookupResponse struct {
 
 func NewBeaconServer(redisAddr, redisPassword string) (*BeaconServer, error) {
 	client := redis.NewClient(&redis.Options{
-		Addr:     redisAddr,
-		Password: redisPassword,
-		DB:       0,
-		PoolSize: 100,
-		TLSConfig: &tls.Config{
-			MinVersion: tls.VersionTLS12,
-		},
+		Addr:         redisAddr,
+		Password:     redisPassword,
+		DB:           0,
+		PoolSize:     100,
+		DialTimeout:  10 * time.Second,
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 30 * time.Second,
 	})
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	// Retry connection with backoff
+	var server *BeaconServer
+	var err error
+	for i := 0; i < 5; i++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
 
-	if _, err := client.Ping(ctx).Result(); err != nil {
-		return nil, fmt.Errorf("failed to connect to Redis: %w", err)
+		if _, err = client.Ping(ctx).Result(); err == nil {
+			return &BeaconServer{redisClient: client}, nil
+		}
+
+		log.Printf("Redis connection attempt %d/5 failed: %v", i+1, err)
+		time.Sleep(time.Duration(i+1) * time.Second
 	}
 
-	return &BeaconServer{
-		redisClient: client,
-	}, nil
+	return nil, fmt.Errorf("failed to connect to Redis after 5 attempts: %w", err)
 }
 
 func (s *BeaconServer) handleBeacon(w http.ResponseWriter, r *http.Request) {
@@ -177,8 +183,8 @@ func redirectToHTTPS(w http.ResponseWriter, r *http.Request) {
 
 func startRedirectServer() {
 	redirectServer := &http.Server{
-		Addr: ":80",
-		Handler: http.HandlerFunc(redirectToHTTPS),
+		Addr:         ":80",
+		Handler:      http.HandlerFunc(redirectToHTTPS),
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 5 * time.Second,
 		IdleTimeout:  30 * time.Second,
@@ -191,22 +197,35 @@ func startRedirectServer() {
 }
 
 func main() {
+	// Configure Redis connection
 	redisAddr := os.Getenv("REDIS_ADDR")
 	if redisAddr == "" {
 		redisAddr = defaultRedisAddr
 	}
 	redisPassword := os.Getenv("REDIS_PASSWORD")
 
-	server, err := NewBeaconServer(redisAddr, redisPassword)
+	// Initialize Redis connection with retries
+	var server *BeaconServer
+	var err error
+	for i := 0; i < 5; i++ {
+		server, err = NewBeaconServer(redisAddr, redisPassword)
+		if err == nil {
+			break
+		}
+		log.Printf("Waiting for Redis... Attempt %d/5: %v", i+1, err)
+		time.Sleep(time.Duration(i+1) * time.Second)
+	}
 	if err != nil {
-		log.Fatalf("Failed to create server: %v", err)
+		log.Fatalf("Could not connect to Redis after 5 attempts: %v", err)
 	}
 
+	// Load TLS certificates
 	cert, err := loadTLSCertificates()
 	if err != nil {
 		log.Fatalf("TLS certificate error: %v", err)
 	}
 
+	// Configure TLS
 	tlsConfig := &tls.Config{
 		Certificates: []tls.Certificate{cert},
 		MinVersion:   tls.VersionTLS12,
@@ -224,20 +243,19 @@ func main() {
 		},
 	}
 
+	// Set up routes
 	router := http.NewServeMux()
 	router.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintln(w, "Beacon server is Up and Running... 🚀")
 	})
-	router.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprintln(w, "Beacon server is Up and Running... 🚀")})	
-
 	router.HandleFunc("/beacon", server.handleBeacon)
 	router.HandleFunc("/lookup", server.handleLookup)
 
+	// Configure HTTP server
 	httpServer := &http.Server{
-		Addr:      ":" + defaultPort,
-		Handler:   securityHeaders(router),
-		TLSConfig: tlsConfig,
+		Addr:         ":" + defaultPort,
+		Handler:      securityHeaders(router),
+		TLSConfig:    tlsConfig,
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 15 * time.Second,
 		IdleTimeout:  60 * time.Second,

@@ -1,53 +1,39 @@
-version: "3.8"
-
+# Remove the 'version' line completely
 services:
   redis:
     image: redis:7-alpine
     volumes:
       - redis_data:/data
-    command: redis-server --requirepass ${REDIS_PASSWORD} --save 60 1 --loglevel warning
+    command: redis-server --requirepass ${REDIS_PASSWORD} --save 60 1
     restart: unless-stopped
-    networks:
-      - beacon_network
-    # Security: Don't expose Redis ports externally
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
       interval: 10s
       timeout: 5s
       retries: 3
+    networks:
+      - beacon_network
 
   beacon:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    build: .
     ports:
-      - "443:443" # HTTPS
-      - "80:80" # HTTP redirect
+      - "443:443"
+      - "80:80"
     volumes:
-      - ./certs:/certs:ro # Mount certificates
+      - ./certs:/app/certs:ro
     depends_on:
       redis:
         condition: service_healthy
     environment:
       - REDIS_ADDR=redis:6379
       - REDIS_PASSWORD=${REDIS_PASSWORD}
-      # Optional: Override default cert paths if needed
-      - TLS_CERT_FILE=/certs/fullchain.pem
-      - TLS_KEY_FILE=/certs/privkey.pem
     restart: unless-stopped
     networks:
       - beacon_network
-    healthcheck:
-      test: ["CMD", "curl", "-k", "https://localhost/"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
 
 networks:
   beacon_network:
     driver: bridge
-    # Security: Enable internal DNS resolution only
-    internal: true
 
 volumes:
   redis_data:
