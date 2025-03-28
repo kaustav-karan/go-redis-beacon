@@ -227,6 +227,7 @@ func main() {
 	tlsConfig := &tls.Config{
 		Certificates: []tls.Certificate{cert},
 		MinVersion:   tls.VersionTLS12,
+		PreferServerCipherSuites: true,
 		CurvePreferences: []tls.CurveID{
 			tls.X25519,
 			tls.CurveP256,

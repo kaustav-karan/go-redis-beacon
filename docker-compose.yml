@@ -27,6 +27,8 @@ services:
     environment:
       - REDIS_ADDR=redis:6379
       - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - TLS_CERT_FILE=/app/certs/fullchain.pem
+      - TLS_KEY_FILE=/app/certs/privkey.pem
     restart: unless-stopped
     networks:
       - beacon_network
