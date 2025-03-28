@@ -34,13 +34,20 @@ type LookupResponse struct {
 	ExpiresIn int64  `json:"expires_in"`
 }
 
-func NewBeaconServer(redisAddr string) *BeaconServer {
+func NewBeaconServer(redisAddr, redisPassword string) *BeaconServer {
 	client := redis.NewClient(&redis.Options{
 		Addr:     redisAddr,
-		Password: "", // no password set
-		DB:       0,  // use default DB
-		PoolSize: 100, // connection pool size
+		Password: redisPassword, // Use the provided password
+		DB:       0,            // use default DB
+		PoolSize: 100,          // connection pool size
 	})
+
+	// Verify the connection works
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := client.Ping(ctx).Result(); err != nil {
+		log.Fatalf("Failed to connect to Redis: %v", err)
+	}
 
 	return &BeaconServer{
 		redisClient: client,
@@ -132,8 +139,9 @@ func main() {
 	if redisAddr == "" {
 		redisAddr = defaultRedisAddr
 	}
+	redisPassword := os.Getenv("REDIS_PASSWORD")
 
-	server := NewBeaconServer(redisAddr)
+	server := NewBeaconServer(redisAddr, redisPassword)
 
 	// Check Redis connection
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
