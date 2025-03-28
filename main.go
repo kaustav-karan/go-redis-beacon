@@ -37,32 +37,30 @@ type LookupResponse struct {
 }
 
 func NewBeaconServer(redisAddr, redisPassword string) (*BeaconServer, error) {
-	client := redis.NewClient(&redis.Options{
-		Addr:         redisAddr,
-		Password:     redisPassword,
-		DB:           0,
-		PoolSize:     100,
-		DialTimeout:  10 * time.Second,
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 30 * time.Second,
-	})
+    client := redis.NewClient(&redis.Options{
+        Addr:         redisAddr,
+        Password:     redisPassword,
+        DB:           0,
+        PoolSize:     100,
+        DialTimeout:  10 * time.Second,
+        ReadTimeout:  30 * time.Second,
+        WriteTimeout: 30 * time.Second,
+    })
 
-	// Retry connection with backoff
-	var server *BeaconServer
-	var err error
-	for i := 0; i < 5; i++ {
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
+    // Retry connection with backoff
+    for i := 0; i < 5; i++ {
+        ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+        defer cancel()
 
-		if _, err = client.Ping(ctx).Result(); err == nil {
-			return &BeaconServer{redisClient: client}, nil
-		}
+        if _, err := client.Ping(ctx).Result(); err == nil {
+            return &BeaconServer{redisClient: client}, nil
+        }
 
-		log.Printf("Redis connection attempt %d/5 failed: %v", i+1, err)
-		time.Sleep(time.Duration(i+1) * time.Second)
-	}
+        log.Printf("Redis connection attempt %d/5 failed", i+1)
+        time.Sleep(time.Duration(i+1) * time.Second)
+    }
 
-	return nil, fmt.Errorf("failed to connect to Redis after 5 attempts: %w", err)
+    return nil, fmt.Errorf("failed to connect to Redis after 5 attempts")
 }
 
 func (s *BeaconServer) handleBeacon(w http.ResponseWriter, r *http.Request) {
