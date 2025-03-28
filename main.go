@@ -59,7 +59,7 @@ func NewBeaconServer(redisAddr, redisPassword string) (*BeaconServer, error) {
 		}
 
 		log.Printf("Redis connection attempt %d/5 failed: %v", i+1, err)
-		time.Sleep(time.Duration(i+1) * time.Second
+		time.Sleep(time.Duration(i+1) * time.Second)
 	}
 
 	return nil, fmt.Errorf("failed to connect to Redis after 5 attempts: %w", err)
