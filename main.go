@@ -303,6 +303,13 @@ func startRedirectServer() {
 	}
 }
 
+func loggingMiddleware(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        log.Printf("Received %s request for %s", r.Method, r.URL.Path)
+        next.ServeHTTP(w, r)
+    })
+}
+
 func main() {
 	// Configure Redis connection
 	redisAddr := os.Getenv("REDIS_ADDR")
@@ -354,8 +361,12 @@ func main() {
 	// Set up routes
 	router := http.NewServeMux()
 	router.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprintln(w, "Beacon server is Up and Running... 🚀")
-	})
+    if r.URL.Path != "/" {
+        http.NotFound(w, r)
+        return
+    }
+    fmt.Fprintln(w, "Beacon server is Up and Running... 🚀")
+})
 	router.HandleFunc("/beacon", server.handleBeacon)
 	router.HandleFunc("/lookup", server.handleLookup)
 	router.HandleFunc("/api/auth", server.handleAuthenticate)
@@ -364,7 +375,7 @@ func main() {
 	// Configure HTTP server
 	httpServer := &http.Server{
 		Addr:         ":" + defaultPort,
-		Handler:      securityHeaders(router),
+		Handler:      securityHeaders(loggingMiddleware(router)),
 		TLSConfig:    tlsConfig,
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 15 * time.Second,
