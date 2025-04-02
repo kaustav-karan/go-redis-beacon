@@ -19,6 +19,7 @@ const (
 	defaultRedisAddr = "redis:6379"
 	recordTTL        = 30 * time.Minute
 	certDir          = "/app/certs"
+	userPrefix       = "user:" // Prefix for user keys in Redis
 )
 
 type BeaconServer struct {
@@ -36,31 +37,42 @@ type LookupResponse struct {
 	ExpiresIn int64  `json:"expires_in"`
 }
 
+type UserCredentials struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+type AddUserRequest struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+	AdminKey string `json:"admin_key"` // Simple admin key for adding users
+}
+
 func NewBeaconServer(redisAddr, redisPassword string) (*BeaconServer, error) {
-    client := redis.NewClient(&redis.Options{
-        Addr:         redisAddr,
-        Password:     redisPassword,
-        DB:           0,
-        PoolSize:     100,
-        DialTimeout:  10 * time.Second,
-        ReadTimeout:  30 * time.Second,
-        WriteTimeout: 30 * time.Second,
-    })
+	client := redis.NewClient(&redis.Options{
+		Addr:         redisAddr,
+		Password:     redisPassword,
+		DB:           0,
+		PoolSize:     100,
+		DialTimeout:  10 * time.Second,
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 30 * time.Second,
+	})
 
-    // Retry connection with backoff
-    for i := 0; i < 5; i++ {
-        ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-        defer cancel()
+	// Retry connection with backoff
+	for i := 0; i < 5; i++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
 
-        if _, err := client.Ping(ctx).Result(); err == nil {
-            return &BeaconServer{redisClient: client}, nil
-        }
+		if _, err := client.Ping(ctx).Result(); err == nil {
+			return &BeaconServer{redisClient: client}, nil
+		}
 
-        log.Printf("Redis connection attempt %d/5 failed", i+1)
-        time.Sleep(time.Duration(i+1) * time.Second)
-    }
+		log.Printf("Redis connection attempt %d/5 failed", i+1)
+		time.Sleep(time.Duration(i+1) * time.Second)
+	}
 
-    return nil, fmt.Errorf("failed to connect to Redis after 5 attempts")
+	return nil, fmt.Errorf("failed to connect to Redis after 5 attempts")
 }
 
 func (s *BeaconServer) handleBeacon(w http.ResponseWriter, r *http.Request) {
@@ -139,6 +151,103 @@ func (s *BeaconServer) handleLookup(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
+}
+
+func (s *BeaconServer) handleAuthenticate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var creds UserCredentials
+	if err := json.NewDecoder(r.Body).Decode(&creds); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if creds.Username == "" || creds.Password == "" {
+		http.Error(w, "Both username and password are required", http.StatusBadRequest)
+		return
+	}
+
+	ctx := context.Background()
+	userKey := fmt.Sprintf("%s%s", userPrefix, creds.Username)
+
+	storedPassword, err := s.redisClient.Get(ctx, userKey).Result()
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			http.Error(w, "Invalid credentials", http.StatusUnauthorized)
+		} else {
+			log.Printf("Redis error: %v", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+		}
+		return
+	}
+
+	if storedPassword != creds.Password {
+		http.Error(w, "Invalid credentials", http.StatusUnauthorized)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": "Authentication successful",
+	})
+}
+
+func (s *BeaconServer) handleAddUser(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req AddUserRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.Username == "" || req.Password == "" {
+		http.Error(w, "Both username and password are required", http.StatusBadRequest)
+		return
+	}
+
+	// Simple admin key check (in production, use proper authentication)
+	if req.AdminKey != os.Getenv("ADMIN_KEY") {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	ctx := context.Background()
+	userKey := fmt.Sprintf("%s%s", userPrefix, req.Username)
+
+	// Check if user already exists
+	exists, err := s.redisClient.Exists(ctx, userKey).Result()
+	if err != nil {
+		log.Printf("Redis error: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	if exists > 0 {
+		http.Error(w, "User already exists", http.StatusConflict)
+		return
+	}
+
+	// Add new user
+	err = s.redisClient.Set(ctx, userKey, req.Password, 0).Err() // 0 means no expiration
+	if err != nil {
+		log.Printf("Failed to set user in Redis: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": "User added successfully",
+	})
 }
 
 func securityHeaders(next http.Handler) http.Handler {
@@ -249,6 +358,8 @@ func main() {
 	})
 	router.HandleFunc("/beacon", server.handleBeacon)
 	router.HandleFunc("/lookup", server.handleLookup)
+	router.HandleFunc("/api/auth", server.handleAuthenticate)
+	router.HandleFunc("/api/users", server.handleAddUser)
 
 	// Configure HTTP server
 	httpServer := &http.Server{
