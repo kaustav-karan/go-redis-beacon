@@ -312,6 +312,27 @@ func loggingMiddleware(next http.Handler) http.Handler {
     })
 }
 
+func enableCORS(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        // Allow all origins (replace * with specific domains in production)
+        w.Header().Set("Access-Control-Allow-Origin", "*")
+        
+        // Allowed methods
+        w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        
+        // Allowed headers
+        w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+        
+        // Handle preflight requests
+        if r.Method == "OPTIONS" {
+            w.WriteHeader(http.StatusOK)
+            return
+        }
+        
+        next.ServeHTTP(w, r)
+    })
+}
+
 func main() {
 	// Configure Redis connection
 	redisAddr := os.Getenv("REDIS_ADDR")
@@ -377,7 +398,7 @@ func main() {
 	// Configure HTTP server
 	httpServer := &http.Server{
 		Addr:         ":" + defaultPort,
-		Handler:      securityHeaders(loggingMiddleware(router)),
+		Handler:      enableCORS(securityHeaders(loggingMiddleware(router))),
 		TLSConfig:    tlsConfig,
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 15 * time.Second,
