@@ -193,7 +193,7 @@ func (s *BeaconServer) handleAuthenticate(w http.ResponseWriter, r *http.Request
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
-		"message": "Authentication successful",
+		"user_id": "@"+creds.Username+":localhost",
 	})
 }
 
