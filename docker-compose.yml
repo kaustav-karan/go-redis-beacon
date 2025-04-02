@@ -29,6 +29,7 @@ services:
       - REDIS_PASSWORD=${REDIS_PASSWORD}
       - TLS_CERT_FILE=/app/certs/fullchain.pem
       - TLS_KEY_FILE=/app/certs/privkey.pem
+      - ADMIN_KEY=bhx6BbdsCr
     restart: unless-stopped
     networks:
       - beacon_network

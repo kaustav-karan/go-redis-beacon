@@ -65,6 +65,7 @@ func NewBeaconServer(redisAddr, redisPassword string) (*BeaconServer, error) {
 		defer cancel()
 
 		if _, err := client.Ping(ctx).Result(); err == nil {
+			log.Printf("Successfully connected to Redis on attempt %d", i+1)
 			return &BeaconServer{redisClient: client}, nil
 		}
 
@@ -215,6 +216,7 @@ func (s *BeaconServer) handleAddUser(w http.ResponseWriter, r *http.Request) {
 
 	// Simple admin key check (in production, use proper authentication)
 	if req.AdminKey != os.Getenv("ADMIN_KEY") {
+		fmt.Println("ADMIN_KEY: ",os.Getenv("ADMIN_KEY"))
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
